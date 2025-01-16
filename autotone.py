@@ -16,7 +16,7 @@ AUDIO_ID = 777
 SAMPLE_RATE = 48000
 BLOCK_DURATION = 1
 BLOCK_SIZE = SAMPLE_RATE * BLOCK_DURATION
-MAX_BLOCKS = 5
+MAX_BLOCKS = 15
 CHANNELS = 1
 OUTPUT_DIR = os.path.join("participants", f"p{AUDIO_ID}")
 BLOCK_ID = 0
@@ -89,8 +89,8 @@ def detect_silence(audio_data):
 async def process_audio(audio_data):
     global BLOCK_COUNTER
     BLOCK_COUNTER += 1
-    await transcribe_audio(audio_data, BLOCK_COUNTER)
-    
+    transcript = await transcribe_audio(audio_data, BLOCK_COUNTER)
+    context = await extract_context(transcript)
 
 def transcribe_audio(audio_data, id):
     print("Transcribing...")
@@ -105,5 +105,28 @@ def transcribe_audio(audio_data, id):
         
         with open(os.path.join(OUTPUT_DIR, f"transcript_{id}"), "w+") as transcript_file:
             transcript_file.write(transcription.text)
+    return transcription.text
+
+def extract_context(transcript):
+    completion = openai.chat.completions.create(
+        model="gpt-4o-mini",
+        messages=[
+            {
+                "role": "developer", 
+                "content": "You are a barebones analyzer of audio transcipts. You respond with the sentiments and emotions (and associated scores) analyzed from text in JSON format."
+            },
+            {
+                "role": "assistant",
+                "content": '{"Sentiment": "Positive (.504)", "Emotions": "Happy (.952), Hopeful (.75)"}'
+            },
+            {
+                "role": "user",
+                "content": "Analyze the sentiment and emotions in this text: " + transcript
+            }
+        ]
+    )
+    
+    print(f"Context: {completion.choices[0].message.content}")
+    return completion.choices[0].message.content
 
 asyncio.run(main())
