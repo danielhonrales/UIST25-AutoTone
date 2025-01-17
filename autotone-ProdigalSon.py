@@ -1,8 +1,8 @@
 from elevenlabs import ElevenLabs
 from getApiKey import get_key
 from collections import deque
-from openai import OpenAI
 import sounddevice as sd
+from openai import OpenAI
 import numpy as np
 import threading
 import asyncio
@@ -14,7 +14,7 @@ AUDIO_ID = 777
 SAMPLE_RATE = 48000
 BLOCK_DURATION = 1
 BLOCK_SIZE = SAMPLE_RATE * BLOCK_DURATION
-MAX_BLOCKS = 5
+MAX_BLOCKS = 15
 CHANNELS = 1
 OUTPUT_DIR = os.path.join("participants", f"p{AUDIO_ID}")
 BLOCK_ID = 0
@@ -33,8 +33,7 @@ elevenlabs = ElevenLabs(
 os.makedirs("participants", exist_ok=True)
 os.makedirs(OUTPUT_DIR, exist_ok=True)
 audio_buffer = deque(maxlen=BUFFER_SIZE)
-loop = asyncio.new_event_loop()
-asyncio.set_event_loop(loop)
+loop = asyncio.get_event_loop()
 
 async def main():
     stream_thread = threading.Thread(target=audio_stream, daemon=True)
@@ -68,9 +67,12 @@ def audio_callback(indata, frames, time, status):
     audio_buffer.extend(audio_data)
     
     # Process audio
+    print(BLOCK_COUNTER)
     if VOICE_ID != -1:
         print(f"Modulating voice with voice {VOICE_ID}")
-        modulate_audio(audio_data)
+        modulated_audio = modulate_voice(audio_data)
+        print(modulated_audio)
+        sd.play(modulated_audio, SAMPLE_RATE)
     else:
         sd.play(audio_data, SAMPLE_RATE)
         
@@ -97,7 +99,8 @@ async def process_audio(audio_data):
     BLOCK_COUNTER += 1
     #transcript = await transcribe_audio(audio_data, BLOCK_COUNTER)
     #context = await extract_context(transcript)
-    await select_voice("")
+    await select_voice()
+    print(f"Voice id: {VOICE_ID}")
 
 def transcribe_audio(audio_data, id):
     print("Transcribing...")
@@ -137,29 +140,17 @@ def extract_context(transcript):
     return completion.choices[0].message.content
 
 def select_voice(context):
-    global VOICE_ID
     VOICE_ID = "goulD9M4G4gdl3jk9hcH"
     return VOICE_ID
 
-def modulate_audio(audio_data):
+def modulate_voice(audio_data):
     save_audio(audio_data, f"audio_to_modulate.wav")
-    with open(os.path.join(OUTPUT_DIR, "audio_to_modulate.wav"), "rb") as audio_file:
-        response_stream = elevenlabs.speech_to_speech.convert_as_stream(
+    with open(os.path.join(OUTPUT_DIR, "audio_to_modulate.wav"), "r") as audio_file:
+        return elevenlabs.speech_to_speech.convert_as_stream(
             voice_id=VOICE_ID,
             enable_logging=True,
-            output_format="pcm_24000",
+            output_format="mp3_22050_32",
             audio=audio_file
         )
 
-        with sd.OutputStream(
-            samplerate=24000,
-            channels=2,
-            dtype="int16"
-        ) as stream:
-            for chunk in response_stream:
-                if chunk:
-                    audio_data = np.frombuffer(chunk, dtype=np.int16)
-                    audio_data = audio_data.reshape(-1, 2)  # for conversion to stereo playback
-                    stream.write(audio_data)
-                
 asyncio.run(main())
