@@ -1,6 +1,4 @@
-#import SpeechToTextTranscription.remoteStreamTranscribe as transcriber
-#import ContextExtraction.openaiAnalyzer as analyzer
-#import VoiceModulation.elevenLabsModulation as modulator
+from elevenlabs import ElevenLabs
 from getApiKey import get_key
 from collections import deque
 import sounddevice as sd
@@ -27,7 +25,10 @@ BUFFER_SIZE = SAMPLE_RATE * CHANNELS * MAX_BLOCKS
 
 # Setup
 openai = OpenAI(
-    api_key=get_key()
+    api_key=get_key("apiKey_openai")
+)
+elevenlabs = ElevenLabs(
+    api_key=get_key("apiKey_elevenlabs")
 )
 os.makedirs("participants", exist_ok=True)
 os.makedirs(OUTPUT_DIR, exist_ok=True)
@@ -68,6 +69,12 @@ def audio_callback(indata, frames, time, status):
     # Process audio
     if VOICE_ID != -1:
         print(f"Modulating voice with voice {VOICE_ID}")
+        modulated_audio = modulate_voice(audio_data)
+        print(modulated_audio)
+        sd.play(modulated_audio, SAMPLE_RATE)
+    else:
+        sd.play(audio_data, SAMPLE_RATE)
+        
     if detect_silence(indata) or len(audio_buffer) >= BUFFER_SIZE:
         with threading.Lock():
             recent_audio_clip = np.array(audio_buffer)
@@ -89,8 +96,10 @@ def detect_silence(audio_data):
 async def process_audio(audio_data):
     global BLOCK_COUNTER
     BLOCK_COUNTER += 1
-    transcript = await transcribe_audio(audio_data, BLOCK_COUNTER)
-    context = await extract_context(transcript)
+    #transcript = await transcribe_audio(audio_data, BLOCK_COUNTER)
+    #context = await extract_context(transcript)
+    await select_voice()
+    print(f"Voice id: {VOICE_ID}")
 
 def transcribe_audio(audio_data, id):
     print("Transcribing...")
@@ -128,5 +137,19 @@ def extract_context(transcript):
     
     print(f"Context: {completion.choices[0].message.content}")
     return completion.choices[0].message.content
+
+def select_voice(context):
+    VOICE_ID = "goulD9M4G4gdl3jk9hcH"
+    return VOICE_ID
+
+def modulate_voice(audio_data):
+    save_audio(audio_data, f"audio_to_modulate.wav")
+    with open(os.path.join(OUTPUT_DIR, "audio_to_modulate.wav"), "r") as audio_file:
+        return elevenlabs.speech_to_speech.convert_as_stream(
+            voice_id=VOICE_ID,
+            enable_logging=True,
+            output_format="mp3_22050_32",
+            audio=audio_file
+        )
 
 asyncio.run(main())

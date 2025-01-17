@@ -1,3 +1,3 @@
-def get_key():
-    with open("apiKey", "r") as key_file:
+def get_key(file_name):
+    with open(file_name, "r") as key_file:
         return key_file.read()
