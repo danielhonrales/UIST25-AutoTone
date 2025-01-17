@@ -1,4 +1,4 @@
-from elevenlabs import ElevenLabs
+from elevenlabs import ElevenLabs, play
 from getApiKey import get_key
 from collections import deque
 from openai import OpenAI
@@ -147,19 +147,10 @@ def modulate_audio(audio_data):
         response_stream = elevenlabs.speech_to_speech.convert_as_stream(
             voice_id=VOICE_ID,
             enable_logging=True,
-            output_format="pcm_24000",
+            output_format="mp3_44100_128",
             audio=audio_file
         )
 
-        with sd.OutputStream(
-            samplerate=24000,
-            channels=2,
-            dtype="int16"
-        ) as stream:
-            for chunk in response_stream:
-                if chunk:
-                    audio_data = np.frombuffer(chunk, dtype=np.int16)
-                    audio_data = audio_data.reshape(-1, 2)  # for conversion to stereo playback
-                    stream.write(audio_data)
+        play(response_stream)
                 
 asyncio.run(main())
