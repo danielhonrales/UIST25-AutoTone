@@ -67,18 +67,18 @@ def audio_callback(indata, frames, time, status):
     audio_data = indata.flatten()
     audio_buffer.extend(audio_data)
     
-    # Process audio
-    if VOICE_ID != -1:
-        print(f"Modulating voice with voice {VOICE_ID}")
-        modulate_audio(audio_data)
-    else:
-        sd.play(audio_data, SAMPLE_RATE)
-        
+    # Process audio  
     if detect_silence(indata) or len(audio_buffer) >= BUFFER_SIZE:
         with threading.Lock():
             recent_audio_clip = np.array(audio_buffer)
             audio_buffer.clear()
         asyncio.run_coroutine_threadsafe(process_audio(recent_audio_clip), loop)
+        
+        if VOICE_ID != -1:
+            print(f"Modulating voice with voice {VOICE_ID}")
+            modulate_audio(recent_audio_clip)
+    else:
+        sd.play(audio_data, SAMPLE_RATE)
 
 def save_audio(block, filename):
     with wave.open(os.path.join(OUTPUT_DIR, filename), 'wb') as wf:
@@ -143,6 +143,7 @@ def select_voice(context):
 
 def modulate_audio(audio_data):
     save_audio(audio_data, f"audio_to_modulate.wav")
+    print("Sending audio to elevenlabs")
     with open(os.path.join(OUTPUT_DIR, "audio_to_modulate.wav"), "rb") as audio_file:
         response_stream = elevenlabs.speech_to_speech.convert_as_stream(
             voice_id=VOICE_ID,
@@ -151,6 +152,7 @@ def modulate_audio(audio_data):
             audio=audio_file
         )
 
+        print("Received modulated audio, playing")
         play(response_stream)
                 
 asyncio.run(main())
