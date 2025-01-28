@@ -16,6 +16,7 @@ CHANNELS = 1
 RATE = 44100  # Sample rate (samples per second)
 CHUNK = 1024  # Number of frames per buffer
 SILENCE_THRESHOLD = 500
+TRANSCRIPTION_SIZE = 100
 API_URL = "https://your-api.com/process_audio"  # Replace with your API endpoint
 OUTPUT_DIR = os.path.join("participants", f"p{AUDIO_ID}")
 
@@ -29,34 +30,60 @@ elevenlabs = ElevenLabs(
 )
 os.makedirs("participants", exist_ok=True)
 os.makedirs(OUTPUT_DIR, exist_ok=True)
+
 audio_queue = asyncio.Queue()
+transcription_queue = asyncio.Queue()
 
 # Flag to indicate if processing is required
-PROCESS_AUDIO = False
+PROCESS_AUDIO = True
 
-# Simulated function for making the API request and processing audio
-async def process_audio_with_api(audio_data):
-    try:
-        async with asyncio.to_thread(transcribe_audio(audio_data, AUDIO_ID)) as transcription:
-            print("Transcription: " + transcription)
+async def process_audio_with_api(audio_data): 
+    return audio_data
+    """ try:
+        async with asyncio.to_thread(process_audio(audio_data)) as processed_audio:
+            return processed_audio
     except Exception as e:
-        print("Transcription failed, " + str(e))
+        print("Processing failed, " + str(e))
+        return audio_data """
 
+def process_audio(audio_data):
+    return audio_data
 
 # Async worker that processes audio requests from the queue
-async def api_worker():
+async def task_process():
     while True:
-        # Get audio data from the queue (this will block if the queue is empty)
-        audio_data = await audio_queue.get()
+            # Get audio data from the queue (this will block if the queue is empty)
+            audio_data = await audio_queue.get()
 
-        if audio_data is None:
-            break  # Exit thread if None is received
+            if audio_data is None:
+                break  # Exit thread if None is received
 
-        # Process the audio with the API
-        processed_audio = await process_audio_with_api(audio_data)
-        
-        # Put the processed audio back into the queue for the callback
-        await audio_queue.put(processed_audio)
+            print("Processing audio...")
+            # Process the audio with the API
+            #processed_audio = await process_audio_with_api(audio_data)
+            
+            # Put the processed audio back into the queue for the callback
+            await audio_queue.put(audio_data)
+            print(audio_queue)
+
+async def task_transcription():
+    while True:
+        print(transcription_queue.qsize())
+        if transcription_queue.qsize() >= TRANSCRIPTION_SIZE:
+            # Get audio data from the queue (this will block if the queue is empty)
+            audio_data = await audio_queue.get()
+
+            if audio_data is None:
+                break  # Exit thread if None is received
+
+            # Process the audio with the API
+            try:
+                transcription = await transcribe_audio(audio_data)
+                
+                # Put the processed audio back into the queue for the callback
+                print("Transcription: " + transcription)
+            except Exception as e:
+                print("Transcription failed, " + str(e))
 
 # Callback function for processing and streaming audio
 def callback(in_data, frame_count, time_info, status):
@@ -65,12 +92,10 @@ def callback(in_data, frame_count, time_info, status):
     # Convert the input data to a numpy array
     audio_data = np.frombuffer(in_data, dtype=np.int16)
 
-    # Check if the condition is met (for example, if the sum of audio exceeds a threshold)
-    if PROCESS_AUDIO and is_silent(audio_data):
-        print("Processing audio...")
-        # Send audio data to the API worker thread for processing
+    if PROCESS_AUDIO:# and is_silent(audio_data):
         asyncio.run_coroutine_threadsafe(audio_queue.put(audio_data.tobytes()), loop)
-
+        #asyncio.run_coroutine_threadsafe(transcription_queue.put(audio_data.tobytes()), loop)
+        
         # Block until the processed audio is available
         processed_audio = asyncio.run_coroutine_threadsafe(audio_queue.get(), loop).result()
     else:
@@ -81,7 +106,7 @@ def callback(in_data, frame_count, time_info, status):
 
 def is_silent(audio_data):
     mean_amplitude = np.abs(audio_data).mean()
-    print(mean_amplitude)
+    #print(mean_amplitude)
 
     if mean_amplitude < SILENCE_THRESHOLD:
         return True 
@@ -127,7 +152,8 @@ loop = asyncio.new_event_loop()
 asyncio.set_event_loop(loop)
 
 # Start the async worker task for API calls
-loop.create_task(api_worker())
+loop.create_task(task_process())
+#loop.create_task(task_transcription())
 
 # Start the audio stream
 stream.start_stream()
