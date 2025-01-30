@@ -18,10 +18,10 @@ RATE = 24000
 CHUNK = 512
 API_URL = "https://your-api-url.com"  # Replace with your actual API URL
 DEQUE_SIZE = 200
-LISTENER_MAXLEN = 15
-TRANSCRIPTION_THRESHOLD = 150  # Threshold for queue size before processing audio
-MODULATION_THRESHOLD = 150 
-SILENCE_THRESHOLD = 2000  # Example threshold for silence detection (if desired)
+LISTENER_MAXLEN = 30
+TRANSCRIPTION_THRESHOLD = 500  # Threshold for queue size before processing audio
+MODULATION_THRESHOLD = 500 
+SILENCE_THRESHOLD = 600  # Example threshold for silence detection (if desired)
 OUTPUT_DIR = os.path.join("participants", f"p{AUDIO_ID}")
 VOICE_IDS = {
     "no_mod": -1,
@@ -105,8 +105,14 @@ async def analyzer():
             results = await analyze_sentiment(transcription)
             
             # TODO: more complex sentiment tracker, maybe decaying weight over time
+            sentiment = results["Sentiment"]["name"]
             sentiment_score = results["Sentiment"]["score"]
-            running_sentiment_score = (sentiment_score + running_sentiment_score) / 2
+            if sentiment == "Positive":
+                running_sentiment_score = (sentiment_score + running_sentiment_score) / 2
+            elif sentiment == "Negative":
+                running_sentiment_score = (-sentiment_score + running_sentiment_score) / 2
+            else:
+                running_sentiment_score = ((sentiment_score / 2) + running_sentiment_score) / 2
             print(f"Running sentiment score: {running_sentiment_score}")
         else:
             await asyncio.sleep(0.1)  # Sleep a little to avoid busy-waiting
@@ -191,7 +197,8 @@ def select_voice(score):
 #############################################################################################################################
 
 def is_silent(audio_data):
-    for chunk in audio_data:
+    copy = audio_data.copy()
+    for chunk in copy:
         mean_amplitude = np.abs(chunk).mean()
         #print(f"Silence Check: {mean_amplitude} / {SILENCE_THRESHOLD}")
 
