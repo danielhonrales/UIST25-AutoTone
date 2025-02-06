@@ -235,10 +235,9 @@ def callback(in_data, frame_count, time_info, status):
             # If processed audio is available, get it from the queue and output it
             processed_audio = processed_audio_deque.popleft()
 
-            # If not right size, do silence
+            # If not right size, add silence
             if len(processed_audio) != frame_count * SAMPLE_WIDTH * CHANNELS:
-                silence = b'\0' * (frame_count * SAMPLE_WIDTH * CHANNELS)
-                return (silence, pyaudio.paContinue)
+                processed_audio = processed_audio.rjust(frame_count * SAMPLE_WIDTH * CHANNELS, b'\0')
             
             return (processed_audio, pyaudio.paContinue)  # Output processed audio
             
