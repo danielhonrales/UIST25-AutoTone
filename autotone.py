@@ -8,6 +8,7 @@ import asyncio
 import wave
 import json
 import os
+import websockets
 
 # Constants
 AUDIO_ID = 777
@@ -21,13 +22,13 @@ DEQUE_SIZE = 200
 LISTENER_MAXLEN = 30
 TRANSCRIPTION_THRESHOLD = 500  # Threshold for queue size before processing audio
 MODULATION_THRESHOLD = 500 
-SILENCE_THRESHOLD = 600  # Example threshold for silence detection (if desired)
+SILENCE_THRESHOLD = 2000  # Example threshold for silence detection (if desired)
 OUTPUT_DIR = os.path.join("participants", f"p{AUDIO_ID}")
 VOICE_IDS = {
-    "no_mod": -1,
-    "neutral": "goulD9M4G4gdl3jk9hcH",
-    "happy": "gJt2pwZO3mYj05aHAJCF",
-    "sad": "MHXQNsZO57D7LmsedS4u"
+    "no_mod": "nofx",
+    "neutral": "nofx",
+    "happy": "4c750653-3dcc-4940-989f-35b15ad28ce6",
+    "sad": "c23efb14-dbdd-44da-8d32-2ab25956a12c"
 }
 
 p = pyaudio.PyAudio()
@@ -35,20 +36,17 @@ p = pyaudio.PyAudio()
 listener_deque = deque(maxlen=LISTENER_MAXLEN)
 transcription_deque = deque(maxlen=DEQUE_SIZE)
 analyzer_deque = deque(maxlen=5)
-modulation_deque = deque(maxlen=DEQUE_SIZE)
+modulation_deque = deque()
 processed_audio_deque = deque()
 
 openai = OpenAI(
     api_key=get_key("apiKey_openai")
 )
-elevenlabs = ElevenLabs(
-    api_key=get_key("apiKey_elevenlabs")
-)
 os.makedirs("participants", exist_ok=True)
 os.makedirs(OUTPUT_DIR, exist_ok=True)
 
 running_sentiment_score = 0
-modulating_voice_id = VOICE_IDS["no_mod"]
+modulating_voice = VOICE_IDS["no_mod"]
 
 #############################################################################################################################
 #############################################################################################################################
@@ -94,6 +92,7 @@ async def transcribe_audio(audio_data, id):
 
 async def analyzer():
     global running_sentiment_score
+    global modulating_voice
 
     print("Analyzer started...")
     while True:
@@ -114,6 +113,13 @@ async def analyzer():
             else:
                 running_sentiment_score = ((sentiment_score / 2) + running_sentiment_score) / 2
             print(f"Running sentiment score: {running_sentiment_score}")
+            
+            # Inform modulator
+            new_voice = select_voice(running_sentiment_score)
+            if new_voice != modulating_voice:
+                modulating_voice = new_voice
+                modulation_deque.append(new_voice)
+            
         else:
             await asyncio.sleep(0.1)  # Sleep a little to avoid busy-waiting
 
@@ -145,52 +151,70 @@ async def analyze_sentiment(transcription):
 #############################################################################################################################
 
 async def modulator():
-    global running_sentiment_score
-    global modulating_voice_id
-    sentiment_score = running_sentiment_score
-    
-    print("Modulator started...")
-    while True:
-        # Select voice when sentiment score changes
-        if sentiment_score != running_sentiment_score:
-            sentiment_score = running_sentiment_score
-            modulating_voice_id = select_voice(sentiment_score)
+    try:
+        async with websockets.connect("ws://localhost:59129/v1") as websocket:
+            # Register with API server
+            register_message = {
+                "id": "ff7d7f15-0cbf-4c44-bc31-b56e0a6c9fa6",
+                "action": "registerClient",
+                "payload": {
+                    "clientKey": get_key("apiKey_voicemod")
+                }
+            }
+            print(f"Connecting with VoiceMod API")
+            await websocket.send(json.dumps(register_message))
+            registered = False
+            while not registered:
+                try:
+                    response = await websocket.recv()
+                    response_json = json.loads(response)
+                    includes_msg = False
+                    for key in response_json.keys():
+                        if key == "msg": includes_msg = True
+                    if not includes_msg or response_json["msg"] != "Pending authentication":
+                        status_code = response_json["payload"]["status"]["code"]
+                        if status_code == 200:
+                            registered = True
+                        """ else:
+                            raise Exception(f"Could not register with VoiceMod, {response}") """
+                except Exception as e:
+                    raise e
+            print(f"Connected to Voicemod API, {response}")
 
-        # Modulate voice
-        if modulating_voice_id != -1:
-            if (len(modulation_deque) > 0 and is_silent(listener_deque)) or len(modulation_deque) >= MODULATION_THRESHOLD:
-                audio_data = b''
-                for val in modulation_deque:
-                    audio_data += val
-                modulation_deque.clear()
+            # TODO: Initialize voice mod
 
-                save_audio(audio_data, f"audio_to_modulate.wav")
-                print("Sending audio to elevenlabs")
-                with open(os.path.join(OUTPUT_DIR, "audio_to_modulate.wav"), "rb") as audio_file:
-                    response = elevenlabs.speech_to_speech.convert(
-                        voice_id=modulating_voice_id,
-                        enable_logging=True,
-                        output_format="pcm_24000",
-                        audio=audio_file
-                    )
+            # Modulate
+            message_id = 0
+            print("Modulator started...")
+            while True:
+                if len(modulation_deque) > 0:
+                    voice_profile = modulation_deque.popleft()
+                    command = {
+                        "action": "loadVoice",
+                        "id": f"load_voice_message_{message_id}",
+                        "payload": {
+                            "voiceID": VOICE_IDS[voice_profile]
+                        }
+                    }
 
-                    for val in response:
-                        processed_audio_deque.append(val)
+                    print(f"Changing voice to {voice_profile}")
+                    await websocket.send(json.dumps(command))
+                    message_id += 1
 
-                    print("Received modulated audio")
-            else:
-                await asyncio.sleep(0.1)
-        else:
-            await asyncio.sleep(0.1)
+                    response = await websocket.recv()
+                    print(f"Changed voice, {response}")
+                else:
+                    await asyncio.sleep(0.1)  # Sleep a little to avoid busy-waiting
+    except Exception as e:
+        print(f"Error with modulator: {e}")
 
 def select_voice(score):
     if -0.3 < score < 0.3:
-        return VOICE_IDS["no_mod"]
+        return "no_mod"
     elif score < -0.3:
-        return VOICE_IDS["sad"]
+        return "sad"
     elif score > 0.3:
-        return VOICE_IDS["happy"]
-
+        return "happy"
 
 #############################################################################################################################
 #############################################################################################################################
@@ -225,25 +249,9 @@ def callback(in_data, frame_count, time_info, status):
         if not is_silent([audio_data]) or not is_silent(listener_deque):
             transcription_deque.append(audio_data.tobytes())
 
-            if modulating_voice_id != VOICE_IDS["no_mod"]:
-                modulation_deque.append(audio_data.tobytes())
-
         #print(f"Listener: {len(listener_deque)} / {LISTENER_MAXLEN}, Transcriber: {len(transcription_deque)} / {TRANSCRIPTION_THRESHOLD}")
 
-        # Check if processed audio is available
-        if len(processed_audio_deque) > 0:
-            # If processed audio is available, get it from the queue and output it
-            processed_audio = processed_audio_deque.popleft()
-
-            # If not right size, add silence
-            if len(processed_audio) != frame_count * SAMPLE_WIDTH * CHANNELS:
-                processed_audio = processed_audio.rjust(frame_count * SAMPLE_WIDTH * CHANNELS, b'\0')
-            
-            return (processed_audio, pyaudio.paContinue)  # Output processed audio
-            
-        else:
-            # If no processed audio, output the original in_data (input audio)
-            return (audio_data, pyaudio.paContinue)  # Output original input audio
+        return (None, pyaudio.paContinue)
     except Exception as e:
         print(f"Error with stream, {e}")
     
@@ -256,7 +264,6 @@ async def main():
                 channels=CHANNELS,
                 rate=RATE,
                 input=True,
-                output=True,
                 frames_per_buffer=CHUNK,
                 stream_callback=callback)
 
