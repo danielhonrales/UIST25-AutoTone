@@ -26,7 +26,7 @@ SILENCE_THRESHOLD = 2000  # Example threshold for silence detection (if desired)
 OUTPUT_DIR = os.path.join("participants", f"p{AUDIO_ID}")
 VOICE_IDS = {
     "no_mod": "nofx",
-    "neutral": "nofx",
+    "neutral": "e12e0d3b-0169-4b7c-8a64-a538710f380e",
     "happy": "4c750653-3dcc-4940-989f-35b15ad28ce6",
     "sad": "c23efb14-dbdd-44da-8d32-2ab25956a12c"
 }
@@ -81,8 +81,8 @@ async def transcribe_audio(audio_data, id):
         )
 
         print(f"Transcription: {transcription.text}")
-        with open(os.path.join(OUTPUT_DIR, f"transcript_{id}"), "w+") as transcript_file:
-            transcript_file.write(transcription.text)
+        """ with open(os.path.join(OUTPUT_DIR, f"transcript_{id}"), "w+") as transcript_file:
+            transcript_file.write(transcription.text) """
 
     return transcription.text
 
@@ -95,13 +95,15 @@ async def analyzer():
     global modulating_voice
 
     print("Analyzer started...")
+    running_transcription = ""
     while True:
         if len(analyzer_deque) > 0:
             print("Analyzing sentiment")
             transcription = analyzer_deque.popleft()
+            running_transcription = running_transcription + " " + transcription
 
             #TODO: add transcription validation
-            results = await analyze_sentiment(transcription)
+            results = await analyze_sentiment(running_transcription)
             
             # TODO: more complex sentiment tracker, maybe decaying weight over time
             sentiment = results["Sentiment"]["name"]
@@ -129,13 +131,18 @@ async def analyze_sentiment(transcription):
         messages=[
             {
                 "role": "developer", 
-                "content": "You are a barebones analyzer of audio transcipts. You respond with the sentiments and emotions analyzed from text in JSON format. Provide the sentiment with name and score properties. Prove the emotions as two index-aligned lists for name and score."
+                "content": """You are a barebones analyzer of audio transcipts. 
+                You respond with the sentiments and emotions analyzed from text in JSON format. 
+                Provide the sentiment with name and score properties. 
+                Provide the emotions as two index-aligned lists for name and score.
+                For emotion, provide analysis based on 4 emotions: Happy, Sad, Angry, Surprise.
+                Always provide a score for each of the 4 emotions, even if it is 0."""
             },
             {
                 "role": "assistant",
-                "content": '{"Sentiment": {"name": "Positive", "score": 0.52}, "Emotions": {"names": ["Happy", "Hopeful"], "scores": [".98", ".75"]}}'
+                "content": '{"Sentiment": {"name": "Positive", "score": 0.52}, "Emotions": {"names": ["Happy", "Sad", "Angry", "Surprise"], "scores": [".98", ".40", "0", "0.03"]}}'
             },
-            {
+            {   
                 "role": "user",
                 "content": "Analyze the sentiment and emotions in this text: " + transcription
             }
@@ -182,6 +189,17 @@ async def modulator():
             print(f"Connected to Voicemod API, {response}")
 
             # TODO: Initialize voice mod
+            command = {
+                "action": "loadVoice",
+                "id": f"load_voice_message_initial",
+                "payload": {
+                    "voiceID": VOICE_IDS["neutral"]
+                }
+            }
+            print(f"Changing voice to initial neutral")
+            await websocket.send(json.dumps(command))
+            response = await websocket.recv()
+            print(f"Changed voice, {response}")
 
             # Modulate
             message_id = 0
@@ -210,7 +228,7 @@ async def modulator():
 
 def select_voice(score):
     if -0.3 < score < 0.3:
-        return "no_mod"
+        return "neutral"
     elif score < -0.3:
         return "sad"
     elif score > 0.3:
